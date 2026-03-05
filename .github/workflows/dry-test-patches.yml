@@ -247,15 +247,26 @@ jobs:
         esac
         RESULTS=""
 
-        PATCH_50="$PATCH_DIR/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        PATCH_50="$PATCH_DIR/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
         if [ -f "$PATCH_50" ]; then
           if patch -p1 -F3 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_50"; then
-            RESULTS="${RESULTS}50_enhanced_susfs|applied\n"
+            RESULTS="${RESULTS}50_upstream_susfs|applied\n"
           else
-            RESULTS="${RESULTS}50_enhanced_susfs|FAILED\n"
+            RESULTS="${RESULTS}50_upstream_susfs|FAILED\n"
           fi
         else
-          RESULTS="${RESULTS}50_enhanced_susfs|skipped (no patch)\n"
+          RESULTS="${RESULTS}50_upstream_susfs|skipped (no patch)\n"
+        fi
+
+        PATCH_51="$PATCH_DIR/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ -f "$PATCH_51" ]; then
+          if patch -p1 -F3 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_51"; then
+            RESULTS="${RESULTS}51_enhanced_susfs|applied\n"
+          else
+            RESULTS="${RESULTS}51_enhanced_susfs|FAILED\n"
+          fi
+        else
+          RESULTS="${RESULTS}51_enhanced_susfs|skipped (no patch)\n"
         fi
 
         PATCH_70="$PATCH_DIR/70_ksu_safety-${KSU_VARIANT,,}-${KERNEL_VER}.patch"
