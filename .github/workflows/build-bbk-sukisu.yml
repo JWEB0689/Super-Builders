@@ -348,11 +348,12 @@ jobs:
 
         # Detect prebuilt clang from repo sync
         CLANG_DIR=$(find kernel_platform/prebuilts/clang/host/linux-x86/ -maxdepth 1 -type d -name 'clang-*' 2>/dev/null | sort -V | tail -1)
-        if [ -n "$CLANG_DIR" ]; then
+        if [ -n "$CLANG_DIR" ] && [ -x "$(realpath "$CLANG_DIR")/bin/clang" ]; then
           export PATH="$(realpath "$CLANG_DIR")/bin:$PATH"
           echo "Using prebuilt clang: $CLANG_DIR"
         else
-          echo "::warning::No prebuilt clang found — using system clang"
+          echo "::warning::No working prebuilt clang — installing system clang"
+          sudo apt-get -qq install -y clang lld llvm >/dev/null 2>&1
         fi
 
         # Bazel first (sm8650+), then OEM script, then direct make
