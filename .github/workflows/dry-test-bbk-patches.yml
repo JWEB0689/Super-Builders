@@ -347,6 +347,8 @@ jobs:
       run: |
         export PATH="${CLANG_BIN}:$PATH"
 
+        sed -i 's|\(.\)obj-\$(CONFIG_KSU) += kernelsu/|\1\nobj-$(CONFIG_KSU) += kernelsu/|' drivers/Makefile 2>/dev/null || true
+
         REAL_CLANG=$(command -v clang)
         printf '#!/bin/bash\nargs=()\nfor a in "$@"; do [[ "$a" == -Werror* ]] || args+=("$a"); done\nexec "%s" "${args[@]}"\n' "$REAL_CLANG" > /tmp/clang-no-werror
         chmod +x /tmp/clang-no-werror
