@@ -51,6 +51,13 @@ jobs:
           exit 1
         fi
 
+        if [ "$(echo "$DEVICE_JSON" | jq -r '.disabled // false')" = "true" ]; then
+          REASON=$(echo "$DEVICE_JSON" | jq -r '.disabled_reason // "no reason given"')
+          echo "::warning::Device '$DEVICE_KEY' is disabled: $REASON"
+          echo "result=[]" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         if [ "$MODE" != "matrix" ]; then
           echo "result=[{\"device\":\"$DEVICE_KEY\"}]" >> "$GITHUB_OUTPUT"
           exit 0
@@ -58,7 +65,7 @@ jobs:
 
         KVER=$(echo "$DEVICE_JSON" | jq -r '.kernel_version')
         DEVICES=$(jq -c --arg kver "$KVER" \
-          '[to_entries[] | select(.value.kernel_version == $kver) | {device: .key}]' \
+          '[to_entries[] | select(.value.kernel_version == $kver and (.value.disabled // false | not)) | {device: .key}]' \
           "$REGISTRY")
         echo "result=$DEVICES" >> "$GITHUB_OUTPUT"
         echo "Matrix: $(echo "$DEVICES" | jq length) devices for kernel $KVER"
@@ -330,7 +337,7 @@ jobs:
       run: |
         bash "$OEM_HELPERS/disable-samsung-security.sh" "$DEFCONFIG"
         for extra in "$KERNEL_COMMON"/arch/arm64/configs/*-bazel_defconfig; do
-          [ -f "$extra" ] && bash "$OEM_HELPERS/disable-samsung-security.sh" "$extra"
+          [ -f "$extra" ] && bash "$OEM_HELPERS/disable-samsung-security.sh" "$extra" || true
         done
 
     - name: Samsung WiFi/BT Fix

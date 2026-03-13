@@ -116,6 +116,10 @@ jobs:
           jq -r 'keys[]' "$REGISTRY" | head -20
           exit 1
         fi
+        if [ "$(echo "$DEVICE_JSON" | jq -r '.disabled // false')" = "true" ]; then
+          echo "::error::Device '$DEVICE_KEY' is disabled: $(echo "$DEVICE_JSON" | jq -r '.disabled_reason // "no reason"')"
+          exit 1
+        fi
 
         BRAND=$(echo "$DEVICE_JSON" | jq -r '.brand')
         DEVICE_NAME=$(echo "$DEVICE_JSON" | jq -r '.name')
@@ -332,7 +336,7 @@ jobs:
         bash "$OEM_HELPERS/disable-samsung-security.sh" "$DEFCONFIG"
         # Exynos Bazel builds use a separate defconfig
         for extra in "$KERNEL_COMMON"/arch/arm64/configs/*-bazel_defconfig; do
-          [ -f "$extra" ] && bash "$OEM_HELPERS/disable-samsung-security.sh" "$extra"
+          [ -f "$extra" ] && bash "$OEM_HELPERS/disable-samsung-security.sh" "$extra" || true
         done
 
     - name: Samsung WiFi/BT Fix
