@@ -1,0 +1,183 @@
+name: Build Android Kernel
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source URL'
+        required: true
+        default: 'https://github.com/LineageOS/android_kernel_qcom_sm8250'
+      KERNEL_BRANCH:
+        description: 'Kernel Branch'
+        required: true
+        default: 'lineage-20'
+      DEFCONFIG:
+        description: 'Defconfig Name'
+        required: true
+        default: 'vendor/kona-perf_defconfig'
+      ENABLE_KERNELSU:
+        description: 'Enable KernelSU'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_SUSFS:
+        description: 'Enable SUSFS for KernelSU (susfs4ksu)'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_NOMOUNT:
+        description: 'Enable NoMount Patch (maxsteeel) for Android13-5.15'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_ZRAM:
+        description: 'Enable ZRAM Optimization Patch'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_BBR:
+        description: 'Enable TCP BBR Congestion Control'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_VFS:
+        description: 'Enable VFS Cache Pressure Optimization'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_LTO_THIN:
+        description: 'Enable ThinLTO (Clang)'
+        required: true
+        type: boolean
+        default: true
+      ENABLE_SUKISU_ULTRA:
+        description: 'Enable SuKiSU-Ultra'
+        required: true
+        type: boolean
+        default: false
+      ENABLE_KPM:
+        description: 'Enable KPM (KernelSU Plugin Manager)'
+        required: true
+        type: boolean
+        default: false
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Workflow Repository
+        uses: actions/checkout@v4
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev curl unzip
+          sudo apt-get install -y clang lld llvm wget git python3 zstd
+      - name: Clone Toolchain (ZyC Clang)
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain
+          git clone --depth=1 https://gitlab.com/zyc_cleo/zyc_clang.git $GITHUB_WORKSPACE/toolchain/zyc-clang
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 --branch ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} $GITHUB_WORKSPACE/kernel
+      - name: Apply KernelSU
+        if: ${{ github.event.inputs.ENABLE_KERNELSU == 'true' }}
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+      - name: Apply SUSFS for KernelSU (susfs4ksu)
+        if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          # Fetch and apply SUSFS patches
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-5.15 ../susfs4ksu
+          cp ../susfs4ksu/kernel_patches/50_recipe_susfs.patch .
+          cp -r ../susfs4ksu/kernel_patches/fs/* fs/
+          cp -r ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          # Force patch with high fuzz to ignore slight mismatches
+          patch -p1 --force --fuzz=3 --no-backup-if-mismatch < 50_recipe_susfs.patch || echo "SUSFS patch failed or requires manual adaptation"
+      - name: Apply NoMount Patch (Android13-5.15)
+        if: ${{ github.event.inputs.ENABLE_NOMOUNT == 'true' }}
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          wget https://raw.githubusercontent.com/maxsteeel/nomount/main/android13-5.15/nomount.patch
+          
+          # Force patch with high fuzz
+          patch -p1 --force --fuzz=3 --no-backup-if-mismatch < nomount.patch || echo "NoMount patch failed or requires manual adaptation"
+      - name: Enable ZRAM, BBR, VFS, LTO and other configs
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
+          
+          if [ "${{ github.event.inputs.ENABLE_ZRAM }}" == "true" ]; then
+            echo "CONFIG_ZRAM=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG_PATH
+          fi
+          
+          if [ "${{ github.event.inputs.ENABLE_BBR }}" == "true" ]; then
+            echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG_PATH
+          fi
+          
+          if [ "${{ github.event.inputs.ENABLE_VFS }}" == "true" ]; then
+            echo "CONFIG_DCACHE_WORD_ACCESS=y" >> $DEFCONFIG_PATH
+          fi
+          
+          if [ "${{ github.event.inputs.ENABLE_LTO_THIN }}" == "true" ]; then
+            echo "CONFIG_LTO_CLANG=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_LTO_CLANG_THIN=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_LTO=y" >> $DEFCONFIG_PATH
+          fi
+      - name: Apply SuKiSU-Ultra
+        if: ${{ github.event.inputs.ENABLE_SUKISU_ULTRA == 'true' }}
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          echo "Applying SuKiSU-Ultra..."
+          # wget <sukisu_ultra_script.sh> && bash sukisu_ultra_script.sh
+      - name: Apply KPM (KernelSU Plugin Manager)
+        if: ${{ github.event.inputs.ENABLE_KPM == 'true' }}
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          echo "Applying KPM..."
+      - name: Build Kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          export PATH="$GITHUB_WORKSPACE/toolchain/zyc-clang/bin:${PATH}"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export LLVM=1
+          export LLVM_IAS=1
+          export CC="ccache clang"
+          export CXX="ccache clang++"
+          make O=out ${{ github.event.inputs.DEFCONFIG }}
+          
+          # Ensure LTO configuration gets populated
+          make O=out olddefconfig
+          
+          make -j$(nproc --all) O=out
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $GITHUB_WORKSPACE/AnyKernel3
+          rm -rf $GITHUB_WORKSPACE/AnyKernel3/.git
+          
+          # Prioritize Image.lz4 if it was compiled, otherwise fall back to Image.gz or Image
+          if [ -f $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.lz4 ]; then
+            cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.lz4 $GITHUB_WORKSPACE/AnyKernel3/
+          elif [ -f $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz ]; then
+            cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz $GITHUB_WORKSPACE/AnyKernel3/
+          elif [ -f $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image ]; then
+            cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image $GITHUB_WORKSPACE/AnyKernel3/
+          else
+            echo "No compiled kernel image found!"
+            exit 1
+          fi
+          
+          cd $GITHUB_WORKSPACE/AnyKernel3
+          zip -r9 $GITHUB_WORKSPACE/kernel-flasher.zip *
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Patched-Kernel-ZIP
+          path: kernel-flasher.zip
