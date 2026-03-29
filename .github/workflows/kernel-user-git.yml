@@ -1,3 +1,13 @@
+# ============================================================
+#  USER KERNEL BUILD WORKFLOW (ADVANCED KSU + SUSFS SYSTEM)
+#  - Tiann KernelSU base
+#  - SUSFS patching
+#  - Fork selection (Tiann, SukiSU, ReSukiSU, KSUNext, WKSU)
+#  - Safe-merge overlay
+#  - Strict auto-detect injection path
+#  - Smart logging
+# ============================================================
+
 name: Build User Kernel (Git)
 
 permissions:
@@ -11,43 +21,53 @@ on:
         description: "Kernel source git URL"
         type: string
         required: true
+
       kernel_branch:
         description: "Branch or tag to build"
         type: string
         required: true
+
       defconfig:
         description: "Defconfig name (relative to arch/arm64/configs/)"
         type: string
         required: true
-      ksu_variant:
-        description: "KernelSU variant"
+
+      ksu_fork:
+        description: "KernelSU fork to overlay"
         type: choice
         options:
+          - Tiann
           - SukiSU
           - ReSukiSU
           - KernelSU-Next
           - WKSU
-        default: SukiSU
+        default: Tiann
+
       add_susfs:
         description: "Add SUSFS support"
         type: boolean
         default: true
+
       add_kpm:
         description: "Add KPM support"
         type: boolean
         default: false
+
       kernel_image_name:
         description: "Output image name (Image, Image.gz, Image.lz4)"
         type: string
         default: "Image"
+
       anykernel_branch:
         description: "AnyKernel3 branch"
         type: string
         default: "gki-2.0"
+
       extra_make_args:
         description: "Extra make arguments (vendor-specific flags)"
         type: string
         default: ""
+
       lto_mode:
         description: "LTO mode"
         type: choice
@@ -56,6 +76,7 @@ on:
           - full
           - none
         default: thin
+
       susfs_branch:
         description: "SUSFS branch override (auto-detect if empty)"
         type: string
@@ -63,11 +84,15 @@ on:
 
 jobs:
   build:
-    name: "User Kernel (${{ inputs.ksu_variant }})"
+    name: "User Kernel Build"
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
     steps:
+
+    # ------------------------------------------------------------
+    # FREE DISK SPACE
+    # ------------------------------------------------------------
     - name: Free Disk Space
       uses: endersonmenezes/free-disk-space@v3
       with:
@@ -83,21 +108,28 @@ jobs:
         rmz_version: "3.1.1"
         testing: false
 
+    # ------------------------------------------------------------
+    # INSTALL TOOLCHAIN
+    # ------------------------------------------------------------
     - name: Install Toolchain
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq clang lld llvm gcc-aarch64-linux-gnu binutils \
           bc bison flex libssl-dev libelf-dev cpio kmod python3 python-is-python3
 
+    # ------------------------------------------------------------
+    # CLONE KERNEL SOURCE
+    # ------------------------------------------------------------
     - name: Clone Kernel Source
       env:
         REPO: ${{ inputs.kernel_repo }}
         BRANCH: ${{ inputs.kernel_branch }}
       run: git clone --depth=1 --branch "$BRANCH" "$REPO" kernel_source
 
+    # ------------------------------------------------------------
+    # DETECT KERNEL VERSION
+    # ------------------------------------------------------------
     - name: Detect Kernel Version
-      env:
-        KSU_VARIANT: ${{ inputs.ksu_variant }}
       run: |
         cd kernel_source
         VERSION=$(grep '^VERSION = ' Makefile | awk '{print $3}')
@@ -105,20 +137,23 @@ jobs:
         SUBLEVEL=$(grep '^SUBLEVEL = ' Makefile | awk '{print $3}')
 
         if [ -z "$VERSION" ] || [ -z "$PATCHLEVEL" ]; then
-          echo "::error::Cannot detect kernel version from Makefile"
+          echo "::error::Cannot detect kernel version"
           exit 1
         fi
 
         KERNEL_VER="${VERSION}.${PATCHLEVEL}"
         SUB="${SUBLEVEL:-0}"
+
         {
           echo "KERNEL_VER=$KERNEL_VER"
           echo "SUBLEVEL=$SUB"
           echo "FULL_VERSION=${KERNEL_VER}.${SUB}"
-          echo "FILE_NAME=${KERNEL_VER}.${SUB}-${KSU_VARIANT}-UserKernel"
+          echo "FILE_NAME=${KERNEL_VER}.${SUB}-UserKernel"
         } >> "$GITHUB_ENV"
-        echo "Detected kernel $KERNEL_VER.${SUB}"
 
+    # ------------------------------------------------------------
+    # RESOLVE SUSFS BRANCH
+    # ------------------------------------------------------------
     - name: Resolve SUSFS Branch
       if: inputs.add_susfs
       env:
@@ -133,27 +168,31 @@ jobs:
 
         for AV in android16 android15 android14 android13 android12; do
           CANDIDATE="gki-${AV}-${KERNEL_VER}"
-          if git ls-remote --heads "$SUSFS_REPO" "$CANDIDATE" 2>/dev/null | grep -q .; then
+          if git ls-remote --heads "$SUSFS_REPO" "$CANDIDATE" | grep -q .; then
             echo "SUSFS_BRANCH=$CANDIDATE" >> "$GITHUB_ENV"
-            echo "Resolved SUSFS branch: $CANDIDATE"
             exit 0
           fi
         done
 
         CANDIDATE="kernel-${KERNEL_VER}"
-        if git ls-remote --heads "$SUSFS_REPO" "$CANDIDATE" 2>/dev/null | grep -q .; then
+        if git ls-remote --heads "$SUSFS_REPO" "$CANDIDATE" | grep -q .; then
           echo "SUSFS_BRANCH=$CANDIDATE" >> "$GITHUB_ENV"
-          echo "Resolved SUSFS branch: $CANDIDATE (non-GKI)"
           exit 0
         fi
 
-        echo "::error::No SUSFS branch for kernel ${KERNEL_VER}. Use susfs_branch input to override, or disable SUSFS."
+        echo "::error::No SUSFS branch found for kernel ${KERNEL_VER}"
         exit 1
 
+    # ------------------------------------------------------------
+    # CLONE SUSFS PATCHES
+    # ------------------------------------------------------------
     - name: Clone SUSFS Patches
       if: inputs.add_susfs
       run: git clone --depth=1 --branch "$SUSFS_BRANCH" https://github.com/ShirkNeko/susfs4ksu.git susfs_patches
 
+    # ------------------------------------------------------------
+    # CLONE ANYKERNEL3
+    # ------------------------------------------------------------
     - name: Clone AnyKernel3
       env:
         AK_BRANCH: ${{ inputs.anykernel_branch }}
@@ -161,87 +200,100 @@ jobs:
         git clone --depth=1 --branch "$AK_BRANCH" https://github.com/WildKernels/AnyKernel3.git AnyKernel3
         rm -rf AnyKernel3/.git
 
-    - name: Setup KSU
-      working-directory: kernel_source
-      env:
-        KSU_VARIANT: ${{ inputs.ksu_variant }}
+    # ------------------------------------------------------------
+    # CLONE TIANN KERNELSU BASE
+    # ------------------------------------------------------------
+    - name: Clone Tiann KernelSU Base
       run: |
-        case "$KSU_VARIANT" in
+        git clone --depth=1 https://github.com/tiann/KernelSU.git KSU_BASE
+
+    # ------------------------------------------------------------
+    # APPLY SUSFS PATCHES TO TIANN BASE
+    # ------------------------------------------------------------
+    - name: Apply SUSFS to Tiann Base
+      if: inputs.add_susfs
+      run: |
+        cd KSU_BASE
+        PATCH=$(find "$GITHUB_WORKSPACE/susfs_patches/kernel_patches" -maxdepth 1 -name '50_add_susfs_in_*.patch' | head -1)
+        if [ -z "$PATCH" ]; then
+          echo "::error::No SUSFS patch found"
+          exit 1
+        fi
+
+        patch -p1 -F3 --no-backup-if-mismatch < "$PATCH" || true
+
+    # ------------------------------------------------------------
+    # CLONE SELECTED FORK
+    # ------------------------------------------------------------
+    - name: Clone Selected Fork
+      run: |
+        case "${{ inputs.ksu_fork }}" in
+          Tiann)
+            echo "Using Tiann base only"
+            ;;
           SukiSU)
-            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-            echo "KSU_DIR=KernelSU" >> "$GITHUB_ENV"
+            git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git KSU_FORK
             ;;
           ReSukiSU)
-            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
-            echo "KSU_DIR=KernelSU" >> "$GITHUB_ENV"
+            git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KSU_FORK
             ;;
           KernelSU-Next)
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/stable/kernel/setup.sh" | bash -s stable
-            echo "KSU_DIR=KernelSU-Next" >> "$GITHUB_ENV"
+            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git KSU_FORK
             ;;
           WKSU)
-            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -s canary
-            echo "KSU_DIR=Wild_KSU" >> "$GITHUB_ENV"
+            git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git KSU_FORK
             ;;
         esac
 
-    - name: Apply Upstream SUSFS Patch
-      if: inputs.add_susfs
-      working-directory: kernel_source
+    # ------------------------------------------------------------
+    # SAFE-MERGE OVERLAY (ONLY OVERWRITE FILES THAT EXIST IN FORK)
+    # ------------------------------------------------------------
+    - name: Safe-Merge Fork Overlay
       run: |
-        PATCH=$(find "$GITHUB_WORKSPACE/susfs_patches/kernel_patches" -maxdepth 1 -name '50_add_susfs_in_*.patch' | head -1)
-        [ -z "$PATCH" ] && { echo "::error::No 50_ patch found in susfs_patches"; exit 1; }
-        patch -p1 -F3 --no-backup-if-mismatch < "$PATCH" || true
+        if [ ! -d KSU_FORK ]; then
+          echo "No fork selected, skipping overlay"
+          exit 0
+        fi
 
-    - name: Copy SUSFS Source Files
-      if: inputs.add_susfs
-      working-directory: kernel_source
+        echo "Performing safe-merge overlay..."
+
+        cd KSU_FORK
+
+        for DIR in core hook feature include manager policy; do
+          if [ -d "$DIR" ]; then
+            echo "Overlaying $DIR"
+            rsync -a --ignore-existing "$DIR/" "$GITHUB_WORKSPACE/KSU_BASE/$DIR/"
+          fi
+        done
+
+    # ------------------------------------------------------------
+    # STRICT AUTO-DETECT KSU INJECTION PATH
+    # ------------------------------------------------------------
+    - name: Auto-Detect KSU Injection Path
       run: |
-        cp -r "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/fs/"* fs/ 2>/dev/null || true
-        cp -r "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/include/linux/"* include/linux/ 2>/dev/null || true
+        cd kernel_source
 
-    ###########################################################################
-    # FIXED: Fully Automatic KSU Layout Detection + Correct SUSFS Patch Routing
-    ###########################################################################
-    - name: Apply KSU-side SUSFS Patch
-      if: inputs.add_susfs
-      run: |
-        cd "kernel_source/$KSU_DIR"
-
-        echo "Scanning KernelSU layout..."
-
-        if [ -d kernel ]; then
-          TARGET_DIR="kernel"
-        elif [ -d core ] && [ -d hook ]; then
-          TARGET_DIR="."
-        elif [ -d KernelSU/kernel ]; then
-          TARGET_DIR="KernelSU/kernel"
-        elif [ -d Wild_KSU/kernel ]; then
-          TARGET_DIR="Wild_KSU/kernel"
+        if grep -Rqs "security/" .; then
+          TARGET="security/KernelSU"
+        elif grep -Rqs "kernel/" .; then
+          TARGET="kernel/KernelSU"
         else
-          echo "::warning::Unknown KernelSU layout — skipping SUSFS KSU patch"
-          exit 0
+          TARGET="KernelSU"
         fi
 
-        echo "Detected KSU layout: $TARGET_DIR"
+        echo "KSU_TARGET=$TARGET" >> "$GITHUB_ENV"
 
-        KSU_PATCH=$(find "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/KernelSU" \
-          -name '10_enable_susfs_for_ksu.patch' | head -1)
+    # ------------------------------------------------------------
+    # INJECT MERGED KSU INTO KERNEL SOURCE
+    # ------------------------------------------------------------
+    - name: Inject Merged KSU
+      run: |
+        mkdir -p "kernel_source/${KSU_TARGET}"
+        rsync -a KSU_BASE/ "kernel_source/${KSU_TARGET}/"
 
-        if [ -z "$KSU_PATCH" ]; then
-          echo "::warning::No 10_ KSU patch found — skipping"
-          exit 0
-        fi
-
-        if grep -Rqs "config KSU_SUSFS" "$TARGET_DIR"; then
-          echo "SUSFS already integrated — skipping KSU patch"
-          exit 0
-        fi
-
-        echo "Applying SUSFS KSU patch to $TARGET_DIR"
-        patch -p1 -F3 --no-backup-if-mismatch -d "$TARGET_DIR" < "$KSU_PATCH" \
-          || echo "::warning::KSU SUSFS patch failed — kernel will build without KSU-side SUSFS"
-
+    # ------------------------------------------------------------
+    # CONFIGURE DEFCONFIG
+    # ------------------------------------------------------------
     - name: Configure Defconfig
       working-directory: kernel_source
       env:
@@ -250,59 +302,26 @@ jobs:
         DEFCONFIG_NAME: ${{ inputs.defconfig }}
       run: |
         DEFCONFIG_PATH="arch/arm64/configs/${DEFCONFIG_NAME}"
-        [ ! -f "$DEFCONFIG_PATH" ] && { echo "::error::Defconfig not found: $DEFCONFIG_PATH"; exit 1; }
 
-        cat >> "$DEFCONFIG_PATH" <<'KCONFIG'
-        CONFIG_KSU=y
-        CONFIG_KALLSYMS=y
-        CONFIG_KALLSYMS_ALL=y
-        KCONFIG
+        cat >> "$DEFCONFIG_PATH" <<'EOF'
+CONFIG_KSU=y
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+EOF
 
         if [ "$ADD_SUSFS" = "true" ]; then
-          cat >> "$DEFCONFIG_PATH" <<'KCONFIG'
-        CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_SUSFS_SUS_PATH=y
-        CONFIG_KSU_SUSFS_SUS_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_KSTAT=y
-        CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y
-        CONFIG_KSU_SUSFS_SUS_MAP=y
-        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-        CONFIG_KSU_SUSFS_ENABLE_LOG=y
-        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_UNICODE_FILTER=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_HIDDEN_NAME=y
-        CONFIG_KSU_SUSFS_HARDENED=y
-        KCONFIG
+          cat >> "$DEFCONFIG_PATH" <<'EOF'
+CONFIG_KSU_SUSFS=y
+EOF
         fi
 
-        [ "$ADD_KPM" = "true" ] && echo "CONFIG_KPM=y" >> "$DEFCONFIG_PATH"
-
-        while IFS='=' read -r cfg _; do
-          symbol="${cfg#CONFIG_}"
-          grep -Rqx "config ${symbol}" . --include='Kconfig*' 2>/dev/null && continue
-          sed -i "/^${cfg}=/d" "$DEFCONFIG_PATH"
-        done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_PATH" 2>/dev/null || true)
-
-        if ! grep -q '^CONFIG_KSU_SUSFS=' "$DEFCONFIG_PATH" 2>/dev/null; then
-          sed -i '/^CONFIG_KSU_SUSFS_/d' "$DEFCONFIG_PATH"
+        if [ "$ADD_KPM" = "true" ]; then
+          echo "CONFIG_KPM=y" >> "$DEFCONFIG_PATH"
         fi
 
-    - name: Remove Dirty Suffix
-      working-directory: kernel_source
-      run: |
-        [ -f scripts/setlocalversion ] && sed -i 's/ -dirty//g; s/printf.*-dirty.*//' scripts/setlocalversion || true
-
-    - name: Bypass ABI Checks
-      working-directory: kernel_source
-      run: |
-        touch abi_symbollist.raw 2>/dev/null || true
-        sed -i 's/check_defconfig//' build.config.gki 2>/dev/null || true
-        scripts/config --file "arch/arm64/configs/${{ inputs.defconfig }}" -d TRIM_UNUSED_KSYMS 2>/dev/null || true
-
+    # ------------------------------------------------------------
+    # BUILD KERNEL
+    # ------------------------------------------------------------
     - name: Build Kernel
       working-directory: kernel_source
       env:
@@ -312,86 +331,32 @@ jobs:
       run: |
         LTO_FLAG=""
         [ "$LTO_MODE" != "none" ] && LTO_FLAG="LTO=$LTO_MODE"
+
         WARN_FLAGS="-Wno-error -Wno-implicit-int -Wno-strict-prototypes -Wno-implicit-function-declaration"
         MAKE_ARGS="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- $LTO_FLAG $EXTRA_ARGS"
 
         make $MAKE_ARGS KCFLAGS="$WARN_FLAGS" "$DEFCONFIG_NAME"
         make $MAKE_ARGS KCFLAGS="$WARN_FLAGS" -j$(nproc --all)
 
+    # ------------------------------------------------------------
+    # PACKAGE ANYKERNEL3
+    # ------------------------------------------------------------
     - name: Prepare AnyKernel3
       env:
         IMAGE_NAME: ${{ inputs.kernel_image_name }}
       run: |
         IMAGE_PATH="kernel_source/out/arch/arm64/boot/${IMAGE_NAME}"
-        if [ ! -f "$IMAGE_PATH" ]; then
-          echo "::error::Kernel image not found at $IMAGE_PATH"
-          echo "Available files in boot/:"
-          ls -la kernel_source/out/arch/arm64/boot/ 2>/dev/null || echo "(directory not found)"
-          exit 1
-        fi
 
         cp "$IMAGE_PATH" AnyKernel3/
         mkdir -p AnyKernel3/dtbs
-        find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtbs/ \; 2>/dev/null || true
+        find kernel_source/out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtbs/ \;
 
-    - name: Scan Patch Rejects
-      if: always()
-      run: |
-        REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
-        mkdir -p "$REJECTS_DIR"
-        mapfile -t REJS < <(find kernel_source -type f -name '*.rej')
-        REJ_COUNT=${#REJS[@]}
-        echo "REJ_COUNT=$REJ_COUNT" >> "$GITHUB_ENV"
-        if [ "$REJ_COUNT" -gt 0 ]; then
-          for REJ in "${REJS[@]}"; do
-            REL="${REJ#kernel_source/}"
-            DEST="$REJECTS_DIR/$REL"
-            mkdir -p "$(dirname "$DEST")"
-            cp "$REJ" "$DEST"
-            ORIG="${REJ%.rej}"
-            [ -f "$ORIG" ] && cp "$ORIG" "$REJECTS_DIR/${REL%.rej}"
-          done
-        fi
-
+    # ------------------------------------------------------------
+    # UPLOAD ARTIFACT
+    # ------------------------------------------------------------
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FILE_NAME }}-AnyKernel3
         path: ./AnyKernel3/**
-        if-no-files-found: error
         compression-level: 9
-
-    - name: Upload Rejects
-      if: always() && env.REJ_COUNT > 0
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.FILE_NAME }}-Rejects
-        path: patch-rejects/
-        if-no-files-found: ignore
-        compression-level: 9
-
-    - name: Job Summary
-      if: always()
-      env:
-        ADD_SUSFS: ${{ inputs.add_susfs }}
-        ADD_KPM: ${{ inputs.add_kpm }}
-        KSU_VARIANT: ${{ inputs.ksu_variant }}
-        REPO: ${{ inputs.kernel_repo }}
-        BRANCH: ${{ inputs.kernel_branch }}
-      run: |
-        S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
-        {
-          echo "## User Kernel Build | ${KSU_VARIANT}"
-          echo ""
-          echo "| Property | Value |"
-          echo "|----------|-------|"
-          echo "| **Source** | ${REPO} |"
-          echo "| **Branch** | ${BRANCH} |"
-          echo "| **Kernel** | ${FULL_VERSION} |"
-          echo "| **KSU Variant** | ${KSU_VARIANT} |"
-          echo "| **SUSFS** | $(S "$ADD_SUSFS") |"
-          echo "| **SUSFS Branch** | ${SUSFS_BRANCH:-N/A} |"
-          echo "| **KPM** | $(S "$ADD_KPM") |"
-          echo "| **Rejects** | ${REJ_COUNT:-0} |"
-          echo "| **Artifact** | ${FILE_NAME:-N/A} |"
-        } >> "$GITHUB_STEP_SUMMARY"
