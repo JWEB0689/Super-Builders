@@ -1,13 +1,3 @@
-# ============================================================
-#  USER KERNEL BUILD WORKFLOW (ADVANCED KSU + SUSFS SYSTEM)
-#  - Tiann KernelSU base
-#  - SUSFS patching
-#  - Fork selection (Tiann, SukiSU, ReSukiSU, KSUNext, WKSU)
-#  - Safe-merge overlay
-#  - Strict auto-detect injection path
-#  - Smart logging
-# ============================================================
-
 name: Build User Kernel (Git)
 
 permissions:
