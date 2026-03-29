@@ -199,7 +199,10 @@ jobs:
       run: |
         cp -r "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/fs/"* fs/ 2>/dev/null || true
         cp -r "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/include/linux/"* include/linux/ 2>/dev/null || true
- 
+
+    ###########################################################################
+    # FIXED: Fully Automatic KSU Layout Detection + Correct SUSFS Patch Routing
+    ###########################################################################
     - name: Apply KSU-side SUSFS Patch
       if: inputs.add_susfs
       run: |
@@ -207,7 +210,6 @@ jobs:
 
         echo "Scanning KernelSU layout..."
 
-        # Detect layout
         if [ -d kernel ]; then
           TARGET_DIR="kernel"
         elif [ -d core ] && [ -d hook ]; then
@@ -223,7 +225,6 @@ jobs:
 
         echo "Detected KSU layout: $TARGET_DIR"
 
-        # Find SUSFS patch
         KSU_PATCH=$(find "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/KernelSU" \
           -name '10_enable_susfs_for_ksu.patch' | head -1)
 
@@ -232,7 +233,6 @@ jobs:
           exit 0
         fi
 
-        # Skip if SUSFS already integrated
         if grep -Rqs "config KSU_SUSFS" "$TARGET_DIR"; then
           echo "SUSFS already integrated — skipping KSU patch"
           exit 0
@@ -241,7 +241,7 @@ jobs:
         echo "Applying SUSFS KSU patch to $TARGET_DIR"
         patch -p1 -F3 --no-backup-if-mismatch -d "$TARGET_DIR" < "$KSU_PATCH" \
           || echo "::warning::KSU SUSFS patch failed — kernel will build without KSU-side SUSFS"
- 
+
     - name: Configure Defconfig
       working-directory: kernel_source
       env:
