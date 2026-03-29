@@ -200,7 +200,7 @@ jobs:
         cp -r "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/fs/"* fs/ 2>/dev/null || true
         cp -r "$GITHUB_WORKSPACE/susfs_patches/kernel_patches/include/linux/"* include/linux/ 2>/dev/null || true
  
-        - name: Apply KSU-side SUSFS Patch
+    - name: Apply KSU-side SUSFS Patch
       if: inputs.add_susfs
       run: |
         cd "kernel_source/$KSU_DIR"
