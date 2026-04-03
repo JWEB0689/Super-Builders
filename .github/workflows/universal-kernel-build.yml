@@ -1,11 +1,9 @@
 name: "Build kernels"
-
 env:
   OUT_DIR: "out"
-
 on:
   workflow_dispatch:
-  inputs:
+    inputs:
       kernelSourceURL:
         description: "Custom kernel source URL"
         required: true
