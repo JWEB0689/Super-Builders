@@ -1,6 +1,8 @@
 name: "Build kernels"
+
 env:
   OUT_DIR: "out"
+
 on:
   workflow_dispatch:
     inputs:
