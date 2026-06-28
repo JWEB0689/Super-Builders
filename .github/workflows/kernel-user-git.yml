@@ -65,7 +65,7 @@ on:
 jobs:
   build:
     name: User Kernel Build
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-medium-4c-8g
     timeout-minutes: 120
 
     steps:
