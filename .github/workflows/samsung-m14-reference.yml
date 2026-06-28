@@ -2,11 +2,10 @@ name: "Samsung M14 Reference Build (MrPankaj24 replica)"
 
 on:
   workflow_dispatch:
-
 jobs:
   build:
     name: Samsung M14 KSU-Next (reference)
-    runs-on: ubuntu-22.04
+    runs-on: tenki-standard-medium-4c-8g
     timeout-minutes: 120
 
     steps:
