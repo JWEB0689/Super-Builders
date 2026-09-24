@@ -101,7 +101,7 @@ jobs:
   build:
     needs: [download-dependencies]
     name: "Samsung ReSukiSU — ${{ inputs.device }}"
-    runs-on: tenki-standard-medium-4c-8g
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       KSU_VARIANT: ReSukiSU

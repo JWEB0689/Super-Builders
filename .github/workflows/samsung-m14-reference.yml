@@ -5,7 +5,7 @@ on:
 jobs:
   build:
     name: Samsung M14 KSU-Next (reference)
-    runs-on: tenki-standard-medium-4c-8g
+    runs-on: ubuntu-latest
     timeout-minutes: 120
 
     steps:

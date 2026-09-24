@@ -26,7 +26,7 @@ on:
 
 jobs:
   setup:
-    runs-on: tenki-standard-medium-4c-8g
+    runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.result }}
     steps:
@@ -71,7 +71,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.setup.outputs.matrix) }}
     name: "Dry Test — ${{ matrix.device }}"
-    runs-on: tenki-standard-medium-4c-8g
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       DEVICE_KEY: ${{ matrix.device }}
